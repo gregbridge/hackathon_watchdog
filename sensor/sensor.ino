@@ -1,4 +1,4 @@
-// Modified from Single-mode of VL53L0X Example
+// Modified from Single-mode of VL53L0X Example but made by GREG and LUCAS
 
 /* This example shows how to get single-shot range
  measurements from the VL53L0X. The sensor can optionally be
@@ -11,9 +11,12 @@
 
 #include <Wire.h>
 #include <VL53L0X.h>
+#include <AWS_IOT.h>
+#include <WiFi.h>
 
 #define LED 2
-#define PIR 18
+#define PIR 15
+#define BIGLED 18
 
 
 volatile int ppl_flag = 0;
@@ -21,6 +24,7 @@ int distance = 0;
 int COUNT = 0;
 
 VL53L0X sensor;
+void PIR_ISR(void);
 
 // Unused remnants of feature creep
 //int dist[ 2 ];
@@ -43,6 +47,35 @@ VL53L0X sensor;
 #define HIGH_SPEED
 //#define HIGH_ACCURACY
 
+// LUCAS 
+AWS_IOT hornbill;
+
+char WIFI_SSID[]="hackathon2019";
+char WIFI_PASSWORD[]="fearlesscoder";
+char HOST_ADDRESS[]="a25cwbvvrpbez9-ats.iot.us-west-2.amazonaws.com";
+char CLIENT_ID[]= "client id";
+char TOPIC_NAME[]= "$aws/things/watchdog/shadow/update";
+int watchdogPin = 2;
+int inPin = 18;
+int val = 0;
+
+ 
+
+int status = WL_IDLE_STATUS;
+
+int tick=0,msgCount=0,msgReceived = 0;
+char payload[512];
+char rcvdPayload[512];
+ 
+
+void mySubCallBackHandler (char *topicName, int payloadLen, char *payLoad)
+
+{
+    strncpy(rcvdPayload,payLoad,payloadLen);
+    rcvdPayload[payloadLen] = 0;
+    msgReceived = 1;
+}
+
 
 void setup()
 {
@@ -50,12 +83,48 @@ void setup()
   Wire.begin();
 
   pinMode(LED, OUTPUT);
-  pinMode(PIR, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(PIR), PIR_ISR, RISING);
+  pinMode(BIGLED, OUTPUT);
+  pinMode(PIR, INPUT);
+  //attachInterrupt(digitalPinToInterrupt(PIR), PIR_ISR, RISING);
   
   
   sensor.init();
   sensor.setTimeout(500);
+
+delay(2000);
+    while (status != WL_CONNECTED)
+    {
+        Serial.print("Attempting to connect to SSID: ");
+        Serial.println(WIFI_SSID);
+
+        // Connect to WPA/WPA2 network. Change this line if using open or WEP network:
+        status = WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+        // wait 5 seconds for connection:
+        delay(5000);
+    }
+    Serial.println("Connected to wifi");
+    if(hornbill.connect(HOST_ADDRESS,CLIENT_ID)== 0)
+    {
+        Serial.println("Connected to AWS");
+        delay(1000);
+ 
+       if(0==hornbill.subscribe(TOPIC_NAME,mySubCallBackHandler))
+        {
+            Serial.println("Subscribe Successfull");
+        }
+        else
+        {
+            Serial.println("Subscribe Failed, Check the Thing Name and Certificates");
+            while(1);
+        }
+    }
+    else
+    {
+        Serial.println("AWS connection failed, Check the HOST Address");
+        while(1);
+    }
+    delay(2000);
+
 
 #if defined LONG_RANGE
   // lower the return signal rate limit (default is 0.25 MCPS)
@@ -73,18 +142,29 @@ void setup()
   sensor.setMeasurementTimingBudget(200000);
 #endif
 
-
+Serial.println("woot");
 }
 
-void PIR_ISR() {
+/*void PIR_ISR() {
   digitalWrite(LED, HIGH);
   ppl_flag = 1;
-}
+}*/
 
 
 void loop()
 {
-if(ppl_flag) {
+digitalWrite(BIGLED, HIGH);
+delay(500);
+digitalWrite(BIGLED, LOW);
+delay(250);
+
+
+
+
+
+
+  
+if(digitalRead(PIR) == HIGH) {
   distance = sensor.readRangeSingleMillimeters();
   if(distance == 8190 || distance < 60) {
     delay(150);
@@ -92,14 +172,44 @@ if(ppl_flag) {
   }
   if(distance != 8109 && distance > 55) {
     COUNT++;
-    // SEND COUNT
+    
+    Serial.println("PERSON!");
+    Serial.println();
+    ppl_flag = 0;
   }
+  delay(500);
+  digitalWrite(LED, LOW);
   ppl_flag = 0;
+
 }
 
-  
-  
-  if (sensor.timeoutOccurred()) { Serial.print(" TIMEOUT"); }
-  delay(150);
-  Serial.println();
+ if(msgReceived == 1)
+    {
+        msgReceived = 0;
+        Serial.print("Received Message:");
+        Serial.println(rcvdPayload);
+ 
+        digitalWrite(BIGLED, HIGH);
+        delay(1000);
+        digitalWrite(BIGLED, LOW);
+    }
+
+     if(tick >= 10)   // publish to topic every 5seconds
+    {
+        tick=0;
+        sprintf(payload,"{ \"state\": { \"desired\": {\"activate\":55}}}");
+        if(hornbill.publish(TOPIC_NAME,payload) == 0)
+        {       
+            Serial.print("Publish Message:");
+            Serial.println(payload);
+        }
+        else
+        {
+            Serial.println("Publish failed");
+        }
+    } 
+    vTaskDelay(1000 / portTICK_RATE_MS);
+    tick++;
+ 
+  if(sensor.timeoutOccurred()) { Serial.print(" TIMEOUT"); }
 }
